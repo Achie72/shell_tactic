@@ -1,4 +1,4 @@
-[Try it out in the browser](https://github.com/Achie72/shell_tactic)
+[Try it out in the browser](https://achie72.github.io/shell_tactic/)
 
 # Description  
 2 players versus game, with tanks, 8 maps, and upgrades, to spice up the battle.
