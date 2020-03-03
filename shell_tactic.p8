@@ -185,7 +185,7 @@ function destroy_bricks(object,width,heigth,direction,flag)
 			if mget(x1,y1) == 51 then
 				mset(x1,y1,52)
 				for i=0,10,1 do
-					add_part(x1*8,y1*8,5,{7,6,5},0)
+						
 				end
 			elseif mget(x1,y1) == 52 then
 				mset(x1,y1,53)
@@ -436,6 +436,7 @@ function move_player(idx)
   end
   if btnp(5,id) then
   	if winner > 0 then
+  		reload(0x2000, 0x2000, 0x1000)
   		state = 4
   		winner = 0
   		camera(0,0)
@@ -455,6 +456,7 @@ function move_player(idx)
   end
   if btnp(4,id) then
   	if winner > 0 then
+  		reload(0x2000, 0x2000, 0x1000)
   		state = 0
   		camera(0,0)
   	end
@@ -700,6 +702,10 @@ function update_bullet()
 				else
 					player.life -= bullet.dmg
 				end
+				for i=0,10,1 do
+					add_part(bullet.x*8+4,bullet.y*8+4,20,{10,9,8,2,5},0)
+				end
+				sfx(1)
 				del(bullets,bullet)
 			end
 		end
