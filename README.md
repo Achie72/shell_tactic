@@ -13,4 +13,9 @@ See more in the `Help` menu ingame.
 # General Idea  
 Create and oldschool game, resembling Battle City, but with local pvp in focus.
 
+---  
+**Social media:**  
+[Follow me on Twitter](https://twitter.com/Achie7240)  
+[![ko-fi](https://www.ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/L4L81GBPX)
+
 
