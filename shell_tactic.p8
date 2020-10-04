@@ -2,20 +2,37 @@ pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
 
+
+-- TODO move all this into a global
 s_turret=5
 m_turret=7
 h_turret=9
 winner = 0
-state = 0 -- 0 menu, 1 game, 2 help, 3 color selector, 4 map select
+mapWon = false
+interactCooldown = 10
+nextInteract = 0
+canInteract = true
+state = 0 -- 0 menu, 1 game, 2 help, 3 color selector, 4 map select, 5 campaing
 select = 0 -- 0 game, 1 help
 clr_select = 0 -- 0 none, 1 plr 1, 2 plr
 clr_selector = 0
 colors = {1,2,3,4,6,8,9,10,11,12,13,14,15}
 clr_player = 0 -- ply 1 select, plr 2 select
 level_selector = 0
+
+
+
 drop_rnd = 100
 next_drop = 0
 drop_in = 0
+enemySpawnPoints = {}
+playerSpawnPoints = {}
+playerCount = 1 -- todo 2,3,4
+campaingLevel = 1
+enemiesSpawned = 0
+spawnIndex = 1
+nextSpawn = 0
+enemiesKilled = 0
 
 player1 = {
 	id = 0,
@@ -32,7 +49,9 @@ player1 = {
 	life = 1,
 	bullets = 7,
 	shield = 0,
-	wpcd = 0
+	wpcd = 0,
+	tpe = "player",
+	active = true
 }
 player2 = {
 	id = 1,
@@ -49,7 +68,9 @@ player2 = {
 	life = 1,
 	bullets = 4,
 	shield = 1,
-	wpcd = 0
+	wpcd = 0,
+	tpe = "player",
+	active = true
 }
 
 players={}
@@ -67,10 +88,127 @@ entities={}
 particles={}
 upgrades={}
 bullets={}
+foliageCollection={}
 add(entities,player1)
 add(entities,player2)
 
+
+-- TODO maybe do this in an iteration
+wallIDList = {64,65,67,68,69}
+waterIDList = {80,81,82,96,97,98,112,113,114}
+playerSpawnIndicatorList = {48,49,50,51}
+
+-- campaing map strings
+campainMapCollection = {
+	"64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,52,0,0,0,67,23,39,39,55,67,0,0,0,0,64,64,0,65,65,0,0,23,39,39,55,0,0,67,0,48,64,64,0,65,0,66,66,23,39,39,55,65,0,67,0,50,64,64,0,0,0,67,66,23,39,39,55,65,0,66,66,0,64,64,52,0,0,67,66,23,39,39,55,65,0,65,65,65,64,64,0,0,0,67,66,23,39,39,55,65,0,66,66,0,64,64,0,65,0,66,66,23,39,39,55,65,0,67,0,49,64,64,0,65,65,0,0,23,39,39,55,0,0,67,0,51,64,64,52,0,0,0,67,23,39,39,55,67,0,0,0,0,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,64,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,"
+}
+campaignMapSpawnNumbers = {10}
+campaignMapSpawnCooldown = {3}
+
+function parse_map(_mapString)
+	local mapString = _mapString
+	local actualMap = {}
+	while #mapString > 0 do	
+		local firstToken=sub(mapString,1,1)
+		local cut = 2
+		if (firstToken!=",") then
+			local workString = sub(mapString,2)
+			local secondToken = sub(workString,1,1)
+			if (secondToken!=",") then
+				local workString = sub(mapString,3)
+				local thirdToken = sub(workString,1,1)
+				if (thirdToken!=",") then
+					local actualToken = firstToken..secondToken..thirdToken
+					add(actualMap,actualToken)
+					cut = 4
+				else
+					local actualToken = firstToken..secondToken
+					add(actualMap,actualToken)
+					cut = 3
+				end
+			else
+				add(actualMap,firstToken)
+				cut = 2
+			end
+		end
+		mapString=sub(mapString,cut)
+	end
+	return actualMap
+end
+
+function load_campaing_map(_index)
+	local mapString = parse_map(campainMapCollection[_index])
+	x = 0
+	y = 0
+	for id in all(mapString) do
+		id = tonum(id)
+		for wallID in all(wallIDList) do
+			if id == wallID then
+				mset(y,x,id)
+			end
+		end
+		for waterID in all(waterIDList) do
+			if id == waterID then
+				mset(y,x,id)
+			end
+		end
+
+		-- if id = 66 create foliage
+		if id == 66 then
+			add_foliage(y,x,66)
+		end
+		-- load enemy spawn point
+		if id == 52 then
+			local point = {
+				xPos = y,
+				yPos = x
+			}
+			add(enemySpawnPoints,point)
+		end
+		-- load player spawn point
+		for spawnPointID in all(playerSpawnIndicatorList) do
+			if id == spawnPointID then
+				local point = {
+					xPos = y,
+					yPos = x
+				}
+				add(playerSpawnPoints,point)
+			end
+		end
+
+		x += 1
+		if (x > 15) then
+			x = 0
+			y +=1
+		end
+	end
+
+
+	spawn_players(playerCount)
+
+end
+
+function unload_map()
+	-- reset map
+	for x=0,15 do
+		for y=0,15 do
+			mset(x,y,0)
+		end
+	end
+	-- reset player spawn points
+	playerSpawnPoints = {}
+	-- reset enemy spawn points
+	enemySpawnPoints = {}
+	-- unload all the stuff
+	entities={}
+	particles={}
+	upgrades={}
+	bullets={}
+	foliageCollection={}
+end
+
 function _init()
+	code()
 	for player in all(players) do
 		player.life = 3
 		player.bullets = 8
@@ -80,11 +218,31 @@ function _init()
 	winner = 0
 end
 
+function spawn_players(count)
+	local spawnedPlayers = 0
+	player1.x = playerSpawnPoints[1].xPos
+	player1.y = playerSpawnPoints[1].yPos
+	add(entities,player1)
+
+end
+
 function reset_option()
 	clr_player = 0
 	level_selector = 0
 	clr_select = 0 -- 0 none, 1 plr 1, 2 plr
 	clr_selector = 0
+end
+
+function code()
+	local mapstring = ""
+	for x=0,15 do
+		for y=0,15 do
+			mapstring = mapstring..mget(x,y)..","
+		end
+	end
+	--add(mapstring,12)
+	--printh(tostr(mapstring))
+	--printh(mapstring)
 end
 
 function collide_map(object,width,heigth,direction,flag)
@@ -175,6 +333,10 @@ function destroy_bricks(object,width,heigth,direction,flag)
 	y1/=8
 	y2/=8
 
+
+	local whiteBrick_0 = 67
+	local whiteBrick_1 = 68
+	local whiteBrick_2 = 69
 	if fget(mget(x1,y1), flag) then
 		if flag == 1 then
 			mset(x1,y1,0)
@@ -182,17 +344,17 @@ function destroy_bricks(object,width,heigth,direction,flag)
 				add_part(x1*8,y1*8,20,{4,2,5},0)
 			end
 		elseif flag == 2 then
-			if mget(x1,y1) == 51 then
-				mset(x1,y1,52)
+			if mget(x1,y1) == whiteBrick_0 then
+				mset(x1,y1,whiteBrick_1)
 				for i=0,10,1 do
-						
+					add_part(x1*8,y1*8,5,{7,6,5},0)
 				end
-			elseif mget(x1,y1) == 52 then
-				mset(x1,y1,53)
+			elseif mget(x1,y1) == whiteBrick_1 then
+				mset(x1,y1,whiteBrick_2)
 				for i=0,10,1 do
 					add_part(x1*8,y1*8,10,{7,6,5},0)
 				end
-			elseif mget(x1,y1) == 53 then
+			elseif mget(x1,y1) == whiteBrick_2 then
 				mset(x1,y1,0)
 				for i=0,10,1 do
 					add_part(x1*8,y1*8,20,{7,6,5},0)
@@ -207,17 +369,17 @@ function destroy_bricks(object,width,heigth,direction,flag)
 				add_part(x1*8,y2*8,20,{4,2,5},0)
 			end
 		elseif flag == 2 then
-			if mget(x1,y2) == 51 then
-				mset(x1,y2,52)
+			if mget(x1,y2) == whiteBrick_0 then
+				mset(x1,y2,whiteBrick_1)
 				for i=0,10,1 do
 					add_part(x1*8,y2*8,5,{7,6,5},0)
 				end
-			elseif mget(x1,y2) == 52 then
-				mset(x1,y2,53)
+			elseif mget(x1,y2) == whiteBrick_1 then
+				mset(x1,y2,whiteBrick_2)
 				for i=0,10,1 do
 					add_part(x1*8,y2*8,10,{7,6,5},0)
 				end
-			elseif mget(x1,y2) == 53 then
+			elseif mget(x1,y2) == whiteBrick_2 then
 				mset(x1,y2,0)
 				for i=0,10,1 do
 					add_part(x1*8,y2*8,20,{7,6,5},0)
@@ -232,17 +394,17 @@ function destroy_bricks(object,width,heigth,direction,flag)
 				add_part(x2*8,y1*8,20,{4,2,5},0)
 			end
 		elseif flag == 2 then
-			if mget(x2,y1) == 51 then
-				mset(x2,y1,52)
+			if mget(x2,y1) == whiteBrick_0 then
+				mset(x2,y1,whiteBrick_1)
 				for i=0,10,1 do
 					add_part(x2*8,y1*8,5,{7,6,5},0)
 				end
-			elseif mget(x2,y1) == 52 then
-				mset(x2,y1,53)
+			elseif mget(x2,y1) == whiteBrick_1 then
+				mset(x2,y1,whiteBrick_2)
 				for i=0,10,1 do
 					add_part(x2*8,y1*8,10,{7,6,5},0)
 				end
-			elseif mget(x2,y1) == 53 then
+			elseif mget(x2,y1) == whiteBrick_2 then
 				mset(x2,y1,0)
 				for i=0,10,1 do
 					add_part(x2*8,y1*8,20,{7,6,5},0)
@@ -257,17 +419,17 @@ function destroy_bricks(object,width,heigth,direction,flag)
 				add_part(x2*8,y2*8,20,{4,2,5},0)
 			end
 		elseif flag == 2 then
-			if mget(x2,y2) == 51 then
-				mset(x2,y2,52)
+			if mget(x2,y2) == whiteBrick_0 then
+				mset(x2,y2,whiteBrick_1)
 				for i=0,10,1 do
 					add_part(x2*8,y2*8,5,{7,6,5},0)
 				end
-			elseif mget(x2,y2) == 52 then
-				mset(x2,y2,53)
+			elseif mget(x2,y2) == whiteBrick_1 then
+				mset(x2,y2,whiteBrick_2)
 				for i=0,10,1 do
 					add_part(x2*8,y2*8,10,{7,6,5},0)
 				end
-			elseif mget(x2,y2) == 53 then
+			elseif mget(x2,y2) == whiteBrick_2 then
 				mset(x2,y2,0)
 				for i=0,10,1 do
 					add_part(x2*8,y2*8,20,{7,6,5},0)
@@ -280,7 +442,7 @@ function destroy_bricks(object,width,heigth,direction,flag)
 	end
 end
 
-function add_enemy(_x,_y,_s,_t,_c)
+function add_enemy(_x,_y,_s,_t,_c,_cd)
 	local enemy = {
 		x = _x,
 		y = _y,
@@ -289,7 +451,13 @@ function add_enemy(_x,_y,_s,_t,_c)
 		speed = _s,
 		direction = 0,
 		turret = _t,
-		turret_color = _c
+		turret_color = _c,
+		tpe = "enemy",
+		direction = 2,
+		life = 1,
+		wpcd = _cd,
+		ccd = 0,
+		active = true
 	}
 	add(entities,enemy)
 
@@ -316,6 +484,7 @@ function add_upgrade(_x,_y,_maxage,_type)
 		maxage = _maxage,
 		tpe = _type
 	}
+	--printh("Upgrade placed: ".._x.." ".._y.." type ".._type)
 	add(upgrades,upgrade)
 end
 
@@ -328,6 +497,59 @@ function add_bullet(_x,_y,_dir,_player_id,_dmg)
 		dmg = _dmg
 	}
 	add(bullets,bullet)
+end
+
+function add_foliage(_x,_y,_spr)
+	local foliage = {
+		x = _x*8,
+		y = _y*8,
+		spr = _spr
+	}
+	add(foliageCollection,foliage)
+end
+
+function line_of_sight(x0,y0,x1,y1)
+	local walls = {49,50,51,52,53}
+  local sx,sy,dx,dy
+
+  if x0 < x1 then
+    sx = 1
+    dx = x1 - x0
+  else
+    sx = -1
+    dx = x0 - x1
+  end
+
+  if y0 < y1 then
+    sy = 1
+    dy = y1 - y0
+  else
+    sy = -1
+    dy = y0 - y1
+  end
+
+  local err, e2 = dx-dy, nil
+
+  	for id in all(walls) do
+  		if (mget(x0, y0) == walls) then return false end
+	end
+
+  while not(x0 == x1 and y0 == y1) do
+    e2 = err + err
+    if e2 > -dy then
+      err = err - dy
+      x0  = x0 + sx
+    end
+    if e2 < dx then
+      err = err + dx
+      y0  = y0 + sy
+    end
+    for id in all(walls) do
+  		if (mget(x0, y0) == walls) then return false end
+	end
+  end
+
+  return true
 end
 
 function place_upgrade()
@@ -349,7 +571,6 @@ function place_upgrade()
 		until not occupied
 		-- if not occupied, place it
 		add_upgrade(x,y,300,flr(rnd(4)))
-		printh(x.." "..y)
 		placed = 1
 	end
 end
@@ -409,76 +630,89 @@ end
 function move_player(idx)
 	local id = idx
 	idx += 1
-	if btn(0,id) then
-    add_part(players[idx].x*8+8,players[idx].y*8+4,20,{13,5},0)
-    if (not collide_map(players[idx],8,8,0,0)) players[idx].x -= players[idx].speed
-    move(players[idx])
-    players[idx].direction = 1
-    sfx(0)
-  elseif btn(1,id) then
-  	add_part(players[idx].x*8,players[idx].y*8+4,20,{13,5},0)
-    if (not collide_map(players[idx],8,8,1,0)) players[idx].x += players[idx].speed
-    move(players[idx])
-    players[idx].direction = 3
-    sfx(0)
-  elseif btn(2,id) then
-  	add_part(players[idx].x*8+4,players[idx].y*8+8,20,{13,5},0)
-    if (not collide_map(players[idx],8,8,2,0)) players[idx].y -= players[idx].speed
-    move(players[idx])
-    players[idx].direction = 0
-    sfx(0)
-  elseif btn(3,id) then
-  	add_part(players[idx].x*8+4,players[idx].y*8,20,{13,5},0)
-    if (not collide_map(players[idx],8,8,3,0)) players[idx].y += players[idx].speed
-    move(players[idx])
-    players[idx].direction = 2
-    sfx(0)
-  end
-  if btnp(5,id) then
-  	if winner > 0 then
-  		reload(0x2000, 0x2000, 0x1000)
-  		state = 4
-  		winner = 0
-  		camera(0,0)
-  	elseif players[idx].wpcd <= 0 then
-  		if players[idx].bullets > 0 then
-  			local dmg = 1
-  			if players[idx].turret == m_turret then
-  				dmg = 2
+	if players[idx].active == true then
+		if btn(0,id) then
+	    add_part(players[idx].x*8+8,players[idx].y*8+4,20,{13,5},0)
+	    if (not collide_map(players[idx],8,8,0,0)) players[idx].x -= players[idx].speed
+	    move(players[idx])
+	    players[idx].direction = 1
+	    sfx(0)
+	elseif btn(1,id) then
+	  	add_part(players[idx].x*8,players[idx].y*8+4,20,{13,5},0)
+	    if (not collide_map(players[idx],8,8,1,0)) players[idx].x += players[idx].speed
+	    move(players[idx])
+	    players[idx].direction = 3
+	    sfx(0)
+	elseif btn(2,id) then
+	  	add_part(players[idx].x*8+4,players[idx].y*8+8,20,{13,5},0)
+	    if (not collide_map(players[idx],8,8,2,0)) players[idx].y -= players[idx].speed
+	    move(players[idx])
+	    players[idx].direction = 0
+	    sfx(0)
+	elseif btn(3,id) then
+	  	add_part(players[idx].x*8+4,players[idx].y*8,20,{13,5},0)
+	    if (not collide_map(players[idx],8,8,3,0)) players[idx].y += players[idx].speed
+	    move(players[idx])
+	    players[idx].direction = 2
+	    sfx(0)
+	end
+	if btnp(5,id) then
+		if winner > 0 then
+			reload(0x2000, 0x2000, 0x1000)
+			state = 4
+			winner = 0
+			camera(0,0)
+		elseif players[idx].wpcd <= 0 then
+			if players[idx].turret == m_turret then
+				dmg = 2
 			elseif players[idx].turret == h_turret then
 				dmg = 3
 			end
-  			add_bullet(players[idx].x,players[idx].y,players[idx].direction,id,dmg)
-  			players[idx].bullets -= 1
-  			players[idx].wpcd = 20	
-  		end
-  	end
-  end
-  if btnp(4,id) then
-  	if winner > 0 then
-  		reload(0x2000, 0x2000, 0x1000)
-  		state = 0
-  		camera(0,0)
-  	end
-  end
-  if players[idx].wpcd > 0 then
-  	players[idx].wpcd -= 1
-  end
+			if state == 5 then
+				add_bullet(players[idx].x,players[idx].y,players[idx].direction,id,dmg)
+				players[idx].wpcd = 20	
+			else
+				if players[idx].bullets > 0 then
+					local dmg = 1
+					add_bullet(players[idx].x,players[idx].y,players[idx].direction,id,dmg)
+					players[idx].bullets -= 1
+					players[idx].wpcd = 20	
+				end
+			end
+		end
+	end
+	if btnp(4,id) then
+		if winner > 0 then
+			reload(0x2000, 0x2000, 0x1000)
+			state = 0
+			camera(0,0)
+		end
+	end
+	if players[idx].wpcd > 0 then
+		players[idx].wpcd -= 1
+	end
 
-  if players[idx].life <= 0 then
-  	if players[idx].id == 0 then
-  		winner = 2
-  	else
-  		winner = 1
-  	end
-  end
+	if not mapWon then
+		if players[idx].life <= 0 then
+			if players[idx].id == 0 then
+				mapWon = true
+				nextInteract = time() + interactCooldown
+				winner = 2
+			else
+				mapWon = true
+				nextInteract = time() + interactCooldown
+				winner = 1
+			end
+		end
+	end
 
-  for up in all(upgrades) do
-  	if (collide_rect(to_rect(players[idx],7,7),to_rect(up,7,7))) then
-  		pickup_upgrade(players[idx],up)
-  		del(upgrades,up)
-  	end
-  end
+	for up in all(upgrades) do
+		if (collide_rect(to_rect(players[idx],7,7),to_rect(up,7,7))) then
+				pickup_upgrade(players[idx],up)
+				del(upgrades,up)
+			end
+		end
+	end
 end
 
 
@@ -486,13 +720,25 @@ function _update()
 	if state == 0 then
 		update_menu()
 	elseif state == 1 then
-		update_game()
+		if not mapWon then
+			update_game()
+		end
+		if nextInteract < time() then
+			canInteract = true
+		end
 	elseif state == 2 then
 		update_help()
 	elseif state == 3 then
 		update_clr_select()
 	elseif state == 4 then
 		update_map_select()
+	elseif state == 5 then
+		if not mapWon then
+			update_campaing()
+		end
+		if nextInteract < time() then
+			canInteract = true
+		end
 	end
 end
 
@@ -561,23 +807,27 @@ end
 
 function update_menu()
 	if btnp(4) then
-		if select == 0 then -- game select
+		if select == 1 then -- game select
 			state = 3 -- color selector
 			reset_option()
-		elseif select == 1 then
+		elseif select == 0 then -- campaing
+			state = 5
+			unload_map()
+			load_campaing_map(campaingLevel)
+		else
 			state = 2
-		end 
+		end
 	end
 
 
 	if btnp(2) then
 		select -= 1 
 		if select < 0 then
-			select = 1
+			select = 2
 		end
 	elseif btnp(3) then
 		select += 1 
-		if select > 1 then
+		if select > 2 then
 			select = 0
 		end
 	end
@@ -587,6 +837,7 @@ function update_game()
 	for idx=0,1,1 do
   		move_player(idx)
   	end
+  	--update_enemy()
  	update_particle()
   	update_upgrade()
   	update_bullet()
@@ -597,6 +848,20 @@ function update_game()
   	if time() < next_drop then
   		drop_in = (next_drop - time())/30
   		next_drop -= 1
+  	end
+end
+
+function update_campaing()
+	for idx=0,1,1 do
+  		move_player(idx)
+  	end
+  	update_enemy()
+ 	update_particle()
+  	update_bullet()
+  	for player in all(players) do
+  		if player.life <= 0 then
+  			player.active = false
+  		end
   	end
 end
 
@@ -618,6 +883,19 @@ function update_particle()
 				end
 			end
 		elseif particle.tpe == 1 then
+			particle.lifetime += 1
+			if particle.lifetime > particle.maxage then
+				del(particles,particle)
+			else
+				if #particle.color_range == 1 then
+					particle.clr = particle.color_range[1]
+				else
+					local idx = particle.lifetime / particle.maxage
+					idx = 1 + flr(idx*#particle.color_range)
+					particle.clr = particle.color_range[idx] 
+				end
+			end
+		elseif particle.tpe == 2 then
 			particle.lifetime += 1
 			if particle.lifetime > particle.maxage then
 				del(particles,particle)
@@ -696,7 +974,7 @@ function update_bullet()
 			end
 		end
 		for player in all(players) do
-			if (collide_rect(to_rect(bullet,7,7),to_rect(player,7,7))) and (not (player.id == bullet.id)) then
+			if (collide_rect(to_rect(bullet,7,7),to_rect(player,7,7))) and ((not (player.id == bullet.id)) or bullet.id == "e") then
 				if player.shield > 0 then
 					player.shield -= bullet.dmg
 				else
@@ -709,7 +987,140 @@ function update_bullet()
 				del(bullets,bullet)
 			end
 		end
+		for enemy in all(entities) do
+			if enemy.tpe == "enemy" then
+				if (collide_rect(to_rect(bullet,7,7),to_rect(enemy,7,7)) and   (bullet.id == 0 or bullet.id == 1)) then
+					enemy.life -= 1
+					for i=0,10,1 do
+						add_part(bullet.x*8+4,bullet.y*8+4,20,{10,9,8,2,5},0)
+					end
+					sfx(1)
+					del(bullets,bullet)
+				end
+			end
+		end
+		for other_bullet in all(bullets) do
+			if not (bullet == other_bullet) then
+				if (collide_rect(to_rect(bullet,7,7),to_rect(other_bullet,7,7))) then
+					del(bullets,bullet)
+					del(bullets,other_bullet)
+					break
+				end
+			end
+		end
+
 	end
+end
+
+function update_enemy()
+	local dmg = 1
+	local enemyNumber = 0
+	for enemy in all(entities) do
+		if enemy.tpe == "enemy" then
+			enemyNumber += 1
+			if enemy.life <= 0 then
+				del(entities,enemy)
+				enemiesKilled += 1
+			end
+			move(enemy)
+			-- 0 up, 1 left, 2 down, 3 right
+			enemy.ccd -= 1
+			if enemy.ccd < 0 then
+				enemy.ccd = 0
+			end
+
+			if enemy.turret == m_turret then
+  				dmg = 2
+			elseif enemy.turret == h_turret then
+				dmg = 3
+			end
+			if enemy.direction == 0 then
+				-- no wall collision
+				if not collide_map(enemy,8,8,2,0) then
+					enemy.y -= enemy.speed
+				-- else change direction
+				elseif rnd() < 0.7 then
+					enemy.direction = flr(rnd(4))
+				-- or shoot wall
+				else
+					if enemy.ccd <= 0 then
+						add_bullet(enemy.x,enemy.y,enemy.direction,"e",dmg)
+						enemy.ccd = enemy.wpcd
+					end
+				end
+			elseif enemy.direction == 1 then
+				-- no wall collision
+				if not collide_map(enemy,8,8,0,0) then
+					enemy.x -= enemy.speed
+				-- else change direction
+				elseif rnd() < 0.7 then
+					enemy.direction = flr(rnd(4))
+				-- or shoot wall
+				else
+					if enemy.ccd <= 0 then
+						add_bullet(enemy.x,enemy.y,enemy.direction,"e",dmg)
+						enemy.ccd = enemy.wpcd
+					end
+				end
+			elseif enemy.direction == 2 then
+				-- no wall collision
+				if not collide_map(enemy,8,8,3,0) then
+					enemy.y += enemy.speed
+				-- else change direction
+				elseif rnd() < 0.7 then
+					enemy.direction = flr(rnd(4))
+				-- or shoot wall
+				else
+					if enemy.ccd <= 0 then
+						add_bullet(enemy.x,enemy.y,enemy.direction,"e",dmg)
+						enemy.ccd = enemy.wpcd
+					end
+				end
+			elseif enemy.direction == 3 then
+				-- no wall collision
+				if not collide_map(enemy,8,8,1,0) then
+					enemy.x += enemy.speed
+				-- else change direction
+				elseif rnd() < 0.7 then
+					enemy.direction = flr(rnd(4))
+				-- or shoot wall
+				else
+					if enemy.ccd <= 0 then
+						add_bullet(enemy.x,enemy.y,enemy.direction,"e",dmg)
+						enemy.ccd = enemy.wpcd
+					end
+				end
+			end
+			if rnd() < 0.01 then
+					enemy.direction = flr(rnd(4))
+				-- or shoot wall
+			end
+		end
+	end
+	if enemiesKilled < campaignMapSpawnNumbers[campaingLevel]-1 then
+		if enemyNumber < 4 then
+			if spawnIndex > 3 then
+					spawnIndex = 1
+			end
+			local x = enemySpawnPoints[spawnIndex].xPos
+			local y = enemySpawnPoints[spawnIndex].yPos
+			if nextSpawn < time() then
+				add_enemy(x,y,0.1,s_turret,8,20)
+				--function add_part(_x,_y,_maxage,_color,_type)
+				
+				spawnIndex += 1
+				nextSpawn = time() + campaignMapSpawnCooldown[campaingLevel]
+			elseif nextSpawn == (time() + 1) then
+				add_part(x*8+4+sin(rnd(1)),y*8+4+cos(rnd(1)),25,{10,9,8},2)
+				add_part(x*8+4+sin(rnd(1)),y*8+4+cos(rnd(1)),20,{10,9,8},2)
+				add_part(x*8+4+sin(rnd(1)),y*8+4+cos(rnd(1)),15,{10,9,8},2)
+			end
+		end
+	end
+end
+
+function enemy_shoot(enemy)
+	add_bullet(enemy.x,enemy.y,enemy.direction,"e",dmg)
 end
 
 -- ========
@@ -727,6 +1138,8 @@ function _draw()
 		draw_clr_select()
 	elseif state == 4 then
 		draw_map_select()
+	elseif state == 5 then
+		draw_game()
 	end
 end
 
@@ -864,13 +1277,16 @@ function draw_menu()
 
 
 	if select == 0 then
-		spr(47,42,55)
-	else
-		spr(47,42,63)
+		spr(47,32,55)
+	elseif select == 1 then
+		spr(47,37,63)
+	else 
+		spr(47,48,71)
 	end
 
-	print("new game",52,56,5)
-	print("help",60,64,5)
+	print("new campaign",42,56,5)
+	print("new versus",47,64,5)
+	print("help",58,72,5)
 
 	if(time()%0.2 > 0.05) then
 		spr(3,24,80)
@@ -902,6 +1318,7 @@ function draw_game()
  	draw_upgrade()
  	draw_part()
  	draw_bullet()
+ 	draw_foliage()
  	if winner > 0 then
 	 	rectfill(32+ ((level_selector*16)*8),60,96+ ((level_selector*16)*8),89,7)
 	    rectfill(33+ ((level_selector*16)*8),61,95+ ((level_selector*16)*8),88,0)
@@ -909,21 +1326,23 @@ function draw_game()
 	    print("\142 - exit",38+ ((level_selector*16)*8),72,players[winner].turret_color)
 	    print("\151 - rematch",38+ ((level_selector*16)*8),80,players[winner].turret_color)
  	end
- 	--rect(crect.x1,crect.y1,crect.x2,crect.y2,7)
+ 	rect(crect.x1,crect.y1,crect.x2,crect.y2,7)
 end
 
 function draw_entites()
 	for entity in all(entities) do
-		if entity.direction == 0 then
-			sspr( (entity.sp_def*8) + (entity.sp *8), 0, 8,8, entity.x*8,entity.y*8,8,8,false,false)
-		elseif entity.direction == 1 then
-			sspr( (entity.sp_def*8) + (entity.sp *8)+16, 0, 8,8, entity.x*8,entity.y*8,8,8,true,false)
-		elseif entity.direction == 2 then
-			sspr( (entity.sp_def*8) + (entity.sp *8), 0, 8, 8, entity.x*8,entity.y*8,8,8,false,true)
-		elseif (entity.direction == 3) then
-			sspr( (entity.sp_def*8) + (entity.sp *8)+16, 0, 8, 8, entity.x*8,entity.y*8,8,8,false,false)
+		if not entity.active == false then
+			if entity.direction == 0 then
+				sspr( (entity.sp_def*8) + (entity.sp *8), 0, 8,8, entity.x*8,entity.y*8,8,8,false,false)
+			elseif entity.direction == 1 then
+				sspr( (entity.sp_def*8) + (entity.sp *8)+16, 0, 8,8, entity.x*8,entity.y*8,8,8,true,false)
+			elseif entity.direction == 2 then
+				sspr( (entity.sp_def*8) + (entity.sp *8), 0, 8, 8, entity.x*8,entity.y*8,8,8,false,true)
+			elseif (entity.direction == 3) then
+				sspr( (entity.sp_def*8) + (entity.sp *8)+16, 0, 8, 8, entity.x*8,entity.y*8,8,8,false,false)
+			end
+			draw_turret(entity,entity.direction)
 		end
-		draw_turret(entity,entity.direction)
 	end
 end
 
@@ -963,6 +1382,12 @@ function draw_turret(entity,direction)
 	end
 end
 
+function draw_foliage()
+	for foliage in all(foliageCollection) do
+		spr(foliage.spr,foliage.x,foliage.y)
+	end
+end
+
 function draw_ui()
 
 	for player in all(players) do
@@ -972,12 +1397,17 @@ function draw_ui()
 		for idx=0,player.shield-1,1 do
 	 		spr(61,90+idx*8 + ((level_selector*16)*8),16+(player.id*68))
 		end
-		for idx=0,player.bullets-1,1 do
-	 		if(idx > 3) then
-	 			spr(62,90+(idx-4)*8 + ((level_selector*16)*8),34+(player.id*68))
-	 		else
-	 		 	spr(62,90+idx*8+ ((level_selector*16)*8),26+(player.id*68))
-	 		end
+		if state == 5 then
+			spr(62,90,26+(player.id*68))
+			print(" : inf",96,27+(player.id*68),6)
+		else
+			for idx=0,player.bullets-1,1 do
+		 		if(idx > 3) then
+		 			spr(62,90+(idx-4)*8 + ((level_selector*16)*8),34+(player.id*68))
+		 		else
+		 		 	spr(62,90+idx*8+ ((level_selector*16)*8),26+(player.id*68))
+		 		end
+			end
 		end
 
 	end
@@ -990,19 +1420,26 @@ function draw_ui()
 
 
 	rectfill(88+ ((level_selector*16)*8),57,127+ ((level_selector*16)*8),65,0) --black seperator
-	
-	print("drop: "..drop_in,89+ ((level_selector*16)*8), 59, 9)
-
+	if state == 5 then
+		print("enemies "..(campaignMapSpawnNumbers[campaingLevel] - enemiesKilled),89+ ((level_selector*16)*8), 59, 9)
+	else
+		print("drop: "..drop_in,89+ ((level_selector*16)*8), 59, 9)
+	end
 	rectfill(88+ ((level_selector*16)*8),66,127+ ((level_selector*16)*8),66,6) -- player 2 start	
 	print("player 2",90+ ((level_selector*16)*8),68,5)
 	rectfill(88+ ((level_selector*16)*8),74,127+ ((level_selector*16)*8),74,6) --player 2 underline
 	--print(stat(1),0,0)
 	--print(stat(0),0,8)
+	print(stat(1),0,0,6)
 end
 
 function draw_part()
 	for particle in all(particles) do
-	 	pset(particle.x,particle.y,particle.clr)
+		if particle.tpe == 2 then
+			circ(particle.x,particle.y,flr(particle.lifetime/3),particle.clr)
+		else
+	 		pset(particle.x,particle.y,particle.clr)
+	 	end
 	end
 end
 
@@ -1067,42 +1504,42 @@ __gfx__
 00000000000000000000000000000000000000000000000001111111111111111111110000000000000000000000000000000000000000000000000055555900
 00000000000000000000000000000000000000000000000001111111111111111111111000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000001111111111111111111111000000000000000000000000000000000000000000000000000000000
-5555555524442444b0b0b0b067776777677767776777677701111111111111111111111005555550055555500555555005555550000000000000000000000000
-55555555222222220303030366666666666666666066606601111111111111111111111050000005500000055000000550000005066666600006600000088000
-55555555444244420b0b0b0b77767776777600767070000600111111111111111111110050066005506666055008800550006605065555600066660000088000
-55555555222222223030303066666666606006666000006600011110000111101111000050066005506556055088880550055605065555600066660008888880
-5555555524442444b0b0b0b067776777670007776000007700000000000000000000000050066005506556055088880550555005065555600066660008888880
-55555555222222220303030366666666666006666000066600000000000000000000000050055005500660055008800550850005006556000055550000088000
-55555555444244420b0b0b0b77767776777607767700000600000000000000000000000050000005500000055000000558000005000660000055550000088000
-55555555222222223030303066666666666666666666666600000000000000000000000005555550055555500555555005555550000000000000000000000000
+00000000000000000000000000000000000000000000000001111111111111111111111005555550055555500555555005555550000000000000000000000000
+000c0000000b0000000a0000000e0000000800000000000001111111111111111111111050000005500000055000000550000005066666600006600000088000
+00c0c00000b0b00000a0a00000e0e000008080000000000000111111111111111111110050066005506666055008800550006605065555600066660000088000
+0c000c000b000b000a000a000e000e00080008000000000000011110000111101111000050066005506556055088880550055605065555600066660008888880
+c00c00c0b00b00b0a00a00a0e00e00e0800800800000000000000000000000000000000050066005506556055088880550555005065555600066660008888880
+0c000c000b000b000a000a000e000e00080008000000000000000000000000000000000050055005500660055008800550850005006556000055550000088000
+00c0c00000b0b00000a0a00000e0e000008080000000000000000000000000000000000050000005500000055000000558000005000660000055550000088000
+000c0000000b0000000a0000000e0000000800000000000000000000000000000000000005555550055555500555555005555550000000000000000000000000
+5555555524442444b0b0b0b067776777677767776777677700000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555555222222220303030366666666666666666066606600000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555555444244420b0b0b0b77767776777600767070000600000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555555222222223030303066666666606006666000006600000000000000000000000000000000000000000000000000000000000000000000000000000000
+5555555524442444b0b0b0b067776777670007776000007700000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555555222222220303030366666666666006666000066600000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555555444244420b0b0b0b77767776777607767700000600000000000000000000000000000000000000000000000000000000000000000000000000000000
+55555555222222223030303066666666666666666666666600000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00110011011100110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111111111111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00011111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01111111111111111111111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111111111111111111110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00011110000111101111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -1291,25 +1728,25 @@ __label__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 
 __gff__
-0000000000000000000000030300000000000000000000000000000000000000000000000000000000000000000000000103000505050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000000000030300000000000000000000000000000000000000000000000000000000000000000000000101010101050000000000000000000001030005050500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __map__
-3030303030303030303030400000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000
-3000000000000000000030000000000030323200000000003232300000000000303232000000000026283000000000003000320000000000320030000000000030000000000000000000300000000000300000000000000000003000000000003000000000000000000030000000000030000000000000000000300000000000
-3000310000310000310030000000000030323200333333003232300000000000303232000000000026283000000000003032313200000032313230000000000030320000313131000032300000000000300033330000003333003000000000003000000033333300000030000000000030003333000000333300300000000000
-3000000000000000000030000000000030000000000000000000300000000000303200003333330026283000000000003000320000000000320030000000000030323200000000003232300000000000300033000033000033003000000000003031310000000000313130000000000030000000000000000000300000000000
-3000313100310031310030000000000030313131000000313131300000000000300000000000000026283000000000003000003131313131000030000000000030313131000000313131300000000000300000003333330000003000000000003032323232323232323230000000000030313100000000003131300000000000
-3000000000330000000030000000000030000000000000000000300000000000300000000000000026283000000000003000003333333333000030000000000030380000000000000036300000000000303133000033000033313000000000003032323232323232323230000000000030161800000000001618300000000000
-3033171733333317173330000000000030000033333333330000300000000000303131311617171727283000000000003000000000000000000030000000000030000031313131310000300000000000303133330000003333313000000000003000333300000033330030000000000030363831323232313638300000000000
-3027272727272727272730000000000030310000003100000031300000000000300000002633273737383000000000003033313131003131313330000000000030000000000000000000300000000000300000003131310000003000000000003031000000310000003130000000000030313332323232323331300000000000
-3027272727272727272730000000000030310000003100000031300000000000301617172733280000003000000000003033313131003131313330000000000030000000000000000000300000000000303133330000003333313000000000003031000000310000003130000000000030313332323232323331300000000000
-3033373733333337373330000000000030000033333333330000300000000000302627373737383131313000000000003000000000000000000030000000000030000031313131310000300000000000303133000000000033313000000000003000333300000033330030000000000030161831323232311618300000000000
-3000000000330000000030000000000030000000000000000000300000000000302628000000000000003000000000003000003333333333000030000000000030180000000000000016300000000000300000000033000000003000000000003032323232323232323230000000000030363800000000003638300000000000
-3000313100310031310030000000000030313131000000313131300000000000302628000000000000003000000000003000003131313131000030000000000030313131000000313131300000000000300000003333330000003000000000003032323232323232323230000000000030313100000000003131300000000000
-3000000000000000000030000000000030000000000000000000300000000000302628003333330000323000000000003000320000000000320030000000000030323200000000003232300000000000300033000033000033003000000000003031310000000000313130000000000030000000000000000000300000000000
-3000310000310000310030000000000030323200333333003232300000000000302628000000000032323000000000003032313200000032313230000000000030320000313131000032300000000000300033330000003333003000000000003000000033333300000030000000000030003333000000333300300000000000
-3000000000000000000030000000000030323200000000003232300000000000302628000000000032323000000000003000320000000000320030000000000030000000000000000000300000000000300000000000000000003000000000003000000000000000000030000000000030000000000000000000300000000000
-3030303030303030303030000000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000
+4040404040404040404040000000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000
+4034000000340000003440000000000030323200000000003232300000000000303232000000000026283000000000003000320000000000320030000000000030000000000000000000300000000000300000000000000000003000000000003000000000000000000030000000000030000000000000000000300000000000
+4000414100000041410040000000000030323200333333003232300000000000303232000000000026283000000000003032313200000032313230000000000030320000313131000032300000000000300033330000003333003000000000003000000033333300000030000000000030003333000000333300300000000000
+4000410000000000410040000000000030000000000000000000300000000000303200003333330026283000000000003000320000000000320030000000000030323200000000003232300000000000300033000033000033003000000000003031310000000000313130000000000030000000000000000000300000000000
+4000004243434342000040000000000030313131000000313131300000000000300000000000000026283000000000003000003131313131000030000000000030313131000000313131300000000000300000003333330000003000000000003032323232323232323230000000000030313100000000003131300000000000
+4043004242424242004340000000000030000000000000000000300000000000300000000000000026283000000000003000003333333333000030000000000030380000000000000036300000000000303133000033000033313000000000003032323232323232323230000000000030161800000000001618300000000000
+4017171717171717171740000000000030000033333333330000300000000000303131311617171727283000000000003000000000000000000030000000000030000031313131310000300000000000303133330000003333313000000000003000333300000033330030000000000030363831323232313638300000000000
+4027272727272727272740000000000030310000003100000031300000000000300000002633273737383000000000003033313131003131313330000000000030000000000000000000300000000000300000003131310000003000000000003031000000310000003130000000000030313332323232323331300000000000
+4027272727272727272740000000000030310000003100000031300000000000301617172733280000003000000000003033313131003131313330000000000030000000000000000000300000000000303133330000003333313000000000003031000000310000003130000000000030313332323232323331300000000000
+4037373737373737373740000000000030000033333333330000300000000000302627373737383131313000000000003000000000000000000030000000000030000031313131310000300000000000303133000000000033313000000000003000333300000033330030000000000030161831323232311618300000000000
+4043004141414141004340000000000030000000000000000000300000000000302628000000000000003000000000003000003333333333000030000000000030180000000000000016300000000000300000000033000000003000000000003032323232323232323230000000000030363800000000003638300000000000
+4000000000000000000040000000000030313131000000313131300000000000302628000000000000003000000000003000003131313131000030000000000030313131000000313131300000000000300000003333330000003000000000003032323232323232323230000000000030313100000000003131300000000000
+4000434342414243430040000000000030000000000000000000300000000000302628003333330000323000000000003000320000000000320030000000000030323200000000003232300000000000300033000033000033003000000000003031310000000000313130000000000030000000000000000000300000000000
+4000000042414200000040000000000030323200333333003232300000000000302628000000000032323000000000003032313200000032313230000000000030320000313131000032300000000000300033330000003333003000000000003000000033333300000030000000000030003333000000333300300000000000
+4000303200410031330040000000000030323200000000003232300000000000302628000000000032323000000000003000320000000000320030000000000030000000000000000000300000000000300000000000000000003000000000003000000000000000000030000000000030000000000000000000300000000000
+4040404040404040404040000000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000303030303030303030303000000000003030303030303030303030000000000030303030303030303030300000000000
 __sfx__
 00010000120500d050120501205012050120500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 000200003165528655216551a6551665513655106550e6550b6550864505635036350262501615016150160501605016050160501605016050160501605016050060500605006050060500605006050060500605
